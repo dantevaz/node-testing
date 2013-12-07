@@ -1,89 +1,70 @@
 //setup Dependencies
-var connect = require('connect')
-    , express = require('express')
-    , io = require('socket.io')
-    , port = (process.env.PORT || 8081);
+var http = require('http');
+var fs = require('fs');
+var path = require('path');
+var mime = require('mime');
 
-//Setup Express
-var server = express.createServer();
-server.configure(function(){
-    server.set('views', __dirname + '/views');
-    server.set('view options', { layout: false });
-    server.use(connect.bodyParser());
-    server.use(express.cookieParser());
-    server.use(express.session({ secret: "shhhhhhhhh!"}));
-    server.use(connect.static(__dirname + '/static'));
-    server.use(server.router);
-});
+var cache = {};
+var port = 3000;
+/************************************ HELPER FUNCTIONS ****************************************/
 
-//setup the errors
-server.error(function(err, req, res, next){
-    if (err instanceof NotFound) {
-        res.render('404.jade', { locals: { 
-                  title : '404 - Not Found'
-                 ,description: ''
-                 ,author: ''
-                 ,analyticssiteid: 'XXXXXXX' 
-                },status: 404 });
-    } else {
-        res.render('500.jade', { locals: { 
-                  title : 'The Server Encountered an Error'
-                 ,description: ''
-                 ,author: ''
-                 ,analyticssiteid: 'XXXXXXX'
-                 ,error: err 
-                },status: 500 });
-    }
-});
-server.listen( port);
-
-//Setup Socket.IO
-var io = io.listen(server);
-io.sockets.on('connection', function(socket){
-  console.log('Client Connected');
-  socket.on('message', function(data){
-    socket.broadcast.emit('server_message',data);
-    socket.emit('server_message',data);
-  });
-  socket.on('disconnect', function(){
-    console.log('Client Disconnected.');
-  });
-});
-
-
-///////////////////////////////////////////
-//              Routes                   //
-///////////////////////////////////////////
-
-/////// ADD ALL YOUR ROUTES HERE  /////////
-
-server.get('/', function(req,res){
-  res.render('index.jade', {
-    locals : { 
-              title : 'Your Page Title'
-             ,description: 'Your Page Description'
-             ,author: 'Your Name'
-             ,analyticssiteid: 'XXXXXXX' 
-            }
-  });
-});
-
-
-//A Route for Creating a 500 Error (Useful to keep around)
-server.get('/500', function(req, res){
-    throw new Error('This is a 500 Error');
-});
-
-//The 404 Route (ALWAYS Keep this as the last route)
-server.get('/*', function(req, res){
-    throw new NotFound;
-});
-
-function NotFound(msg){
-    this.name = 'NotFound';
-    Error.call(this, msg);
-    Error.captureStackTrace(this, arguments.callee);
+/*
+    404 - NOT FOUND handler
+ */
+function send404(response){
+    response.writeHead(404, {'Content-Type': 'text/plain'});
+    response.write('Error 404: NOT FOUND');
+    response.end();
 }
 
+/*
+    Serve file contents
+ */
+function sendFile(response, filePath, fileContents){
+    response.writeHead(200, {'Content-Type': mime.lookup(path.basename(filePath))});
+    response.end(fileContents);
+}
 
-console.log('Listening on http://0.0.0.0:' + port );
+/*
+   Serve static file contents
+ */
+function serveStatic(response, cache, absPath){
+    if (cache[absPath]){
+        sendFile(response, absPath, cache[absPath]);
+    }else{
+        fs.exists(absPath, function(exists){
+            if (exists){
+                fs.readFile(absPath, function(err, data){
+                    if (err){
+                        send404(response);
+                    }else{
+                        cache[absPath] = data;
+                        sendFile(response, absPath, data);
+                    }
+                })
+            }else{
+                send404(response);
+            }
+        })
+    }
+}
+
+/* Create server */
+var server = http.createServer(function(request, response){
+    var filePath = false;
+
+    if (request.url == '/'){
+        filePath = 'public/index.html';
+    }else{
+        filePath = 'public' + request.url;
+    }
+    var absPath = './' + filePath;
+    serveStatic(response, cache, absPath);
+});
+
+server.listen(port, function(){
+    console.log('Listening on http://0.0.0.0:' + port );
+});
+
+var chatServer = require('./lib/chat_server');
+chatServer.listen(server);
